@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# 打包产物（99MB，用 scripts\build_exe.bat 重新生成）
+dist/
+build/
+
+# 调研证据临时文件（第三方标准 PDF/厂商手册/其他仓库代码，不入库）
+resources/research/_tmp/
+
+# IDE / 系统
+.idea/
+.vscode/
+Thumbs.db
