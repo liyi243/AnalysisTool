@@ -77,6 +77,7 @@ class ParsedFrame:
     ctrl_name: str = ""               # 控制码功能码名称
     afn_byte: int | None = None       # 应用层功能码原始值
     afn_name: str = ""                # AFN 名称
+    protocol_version: str = "2019"    # "2013" | "2019"，影响部分字段长度与命名
 
     @property
     def length(self) -> int:

@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_topbar())
         root.addWidget(self._build_body(), 1)
         self.statusBar().showMessage("就绪")
-        ver = QLabel(f"v1.0.0 · Q/GDW 376.2")
+        ver = QLabel("v1.1.0 · Q/GDW 376.2")
         ver.setObjectName("mutedText")
         self.statusBar().addPermanentWidget(ver)
 
@@ -69,13 +69,23 @@ class MainWindow(QMainWindow):
         dot.setObjectName("brandDot")
         title = QLabel("376.2 协议解析工具")
         title.setObjectName("brandTitle")
-        chip = QLabel("协议：Q/GDW 376.2 集中器本地通信模块接口协议")
+        chip = QLabel("协议：Q/GDW 376.2")
         chip.setObjectName("versionChip")
         lay.addWidget(dot)
         lay.addSpacing(6)
         lay.addWidget(title)
         lay.addSpacing(10)
         lay.addWidget(chip)
+        lay.addSpacing(12)
+        ver_label = QLabel("版本")
+        ver_label.setObjectName("mutedText")
+        self._ver_combo = QComboBox()
+        self._ver_combo.addItem("2019（默认，含 HPLC）", "2019")
+        self._ver_combo.addItem("2013（宽带载波）", "2013")
+        self._ver_combo.setToolTip("选择协议版本。影响确认帧数据单元长度及通信方式命名等。")
+        self._ver_combo.currentIndexChanged.connect(self._on_version_changed)
+        lay.addWidget(ver_label)
+        lay.addWidget(self._ver_combo)
         lay.addStretch(1)
 
         self._btn_export = QToolButton()
@@ -149,10 +159,16 @@ class MainWindow(QMainWindow):
         bt.setObjectName("panelTitle")
         self._byte_info = QLabel("—")
         self._byte_info.setObjectName("mutedText")
+        self._btn_copy_hex = QToolButton()
+        self._btn_copy_hex.setText("复制HEX")
+        self._btn_copy_hex.setToolTip("复制当前帧的原始十六进制（空格分隔）")
+        self._btn_copy_hex.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_copy_hex.clicked.connect(self._copy_current_hex)
         bt_row.addWidget(bt)
         bt_row.addSpacing(10)
         bt_row.addWidget(self._byte_info)
         bt_row.addStretch(1)
+        bt_row.addWidget(self._btn_copy_hex)
         bp.addLayout(bt_row)
         self._legend_label = QLabel("")
         self._legend_label.setWordWrap(True)
@@ -255,7 +271,7 @@ class MainWindow(QMainWindow):
         self.input.set_busy(True)
         QApplication.processEvents()
         t0 = time.perf_counter()
-        result = parse_text(text)
+        result = parse_text(text, protocol_version=self._current_version())
         ms = (time.perf_counter() - t0) * 1000
         self.input.set_busy(False)
         self._apply_result(result, ms)
@@ -269,7 +285,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
         t0 = time.perf_counter()
         try:
-            result = parse_file(path)
+            result = parse_file(path, protocol_version=self._current_version())
         except OSError as e:
             self.input.set_busy(False)
             self.statusBar().showMessage(f"读取文件失败：{e}", 5000)
@@ -424,13 +440,33 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(exporter.render_text(result))
         self.statusBar().showMessage("解析文本已复制到剪贴板", 4000)
 
+
+    def _current_version(self) -> str:
+        if hasattr(self, "_ver_combo"):
+            return self._ver_combo.currentData() or "2019"
+        return "2019"
+
+    def _on_version_changed(self, _idx: int = 0) -> None:
+        ver = self._current_version()
+        self.statusBar().showMessage(f"已切换协议版本：Q/GDW 376.2-{ver}，下次解析生效", 4000)
+
+
+    def _copy_current_hex(self) -> None:
+        if self._current is None or not self._current.raw:
+            self.statusBar().showMessage("无当前帧可复制", 3000)
+            return
+        hexs = " ".join(f"{b:02X}" for b in self._current.raw)
+        QApplication.clipboard().setText(hexs)
+        self.statusBar().showMessage(f"已复制当前帧 HEX（{len(self._current.raw)} 字节）", 4000)
+
     def _show_about(self) -> None:
         QMessageBox.information(
             self, "关于",
-            "<b>376.2 协议解析工具 v1.0.0</b><br><br>"
+            "<b>376.2 协议解析工具 v1.1.0</b><br><br>"
             "面向 Q/GDW 376.2《集中器本地通信模块接口协议》的报文解析工具。<br>"
-            "支持单帧 / 多帧字节流 / 文本文件提取解析，链路层逐字段拆解、"
-            "应用层 AFN 数据单元解析、内嵌 DL/T 645 报文解析、CS 校验诊断。<br><br>"
+            "支持 2013 / 2019 版本切换、单帧 / 多帧字节流 / 文本文件提取解析，"
+            "链路层逐字段拆解、应用层 AFN 数据单元解析（已补充更多解码器）、"
+            "内嵌 DL/T 645 报文解析、CS 校验诊断。<br><br>"
             "解析引擎与 GUI 解耦，预留 DLT645 / 376.1 / 698 协议扩展接口。")
 
     def _on_clear(self) -> None:

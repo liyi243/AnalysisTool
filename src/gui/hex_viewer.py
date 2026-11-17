@@ -159,8 +159,8 @@ class HexByteMapViewer(QWidget):
                     p.drawRoundedRect(cell, 4, 4)
                 p.setPen(color)
                 p.drawText(cell, Qt.AlignmentFlag.AlignCenter, f"{raw[idx]:02X}")
-            # ASCII 列
-            p.setPen(QColor(TXT_MUTED))
+            # ASCII 列（提高对比度）
+            p.setPen(QColor("#CBD5E1"))
             ax = x0 + self._offset_w + 16 * self._cw + self._ascii_gap
             chars = []
             for c in range(16):

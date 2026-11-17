@@ -20,12 +20,14 @@ COMM_TYPE = {
 }
 
 
-def comm_type_name(v: int) -> str:
+def comm_type_name(v: int, version: str = "2019") -> str:
+    """通信方式名称。version='2013' 时值 3 使用“宽带载波通信”。"""
+    if v == 3:
+        if version == "2013":
+            return "宽带载波通信"
+        return "HPLC 载波通信（2013版：宽带载波）"
     if v in COMM_TYPE:
-        base = COMM_TYPE[v]
-        if v == 3:
-            base += "（2013版：宽带载波）"
-        return base
+        return COMM_TYPE[v]
     if 4 <= v <= 9:
         return f"备用(0x{v:02X})"
     if 11 <= v <= 19 or 21 <= v <= 63:

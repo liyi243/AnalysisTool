@@ -37,13 +37,21 @@ def _embed_proto_field(name: str, proto: int, content: bytes, offset: int) -> Fi
 
 # ── 各 Fn 解码器：输入 (data剩余, 绝对偏移) → (Field, 消耗字节数) ──
 
-def _dec_afn00_f1(data: bytes, off: int) -> tuple[Field, int]:
-    if len(data) < 6:
+def _dec_afn00_f1(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
+    """确认(F1)。2013 版：2B 信道状态 BS + 2B 等待时间（共 4B）；
+    2019 版及项目样例：4B 信道状态 + 2B 等待时间（共 6B）。"""
+    status_len = 2 if version == "2013" else 4
+    total = status_len + 2
+    if len(data) < total:
         return _raw_field("确认数据单元", data, off), len(data)
-    wait = _int_le(data[4:6])
-    return Field("确认(F1)", off, 6, data[:6].hex(" ").upper(),
-                 f"信道状态字 0x{data[:4][::-1].hex().upper()}（0=忙/1=闲）；等待时间 {wait} s",
-                 "4B信道状态BS + 2B等待时间", KIND_DATA), 6
+    status = data[:status_len]
+    wait = _int_le(data[status_len:status_len + 2])
+    note = f"{status_len}B信道状态BS + 2B等待时间"
+    if version == "2013":
+        note += "（2013版）"
+    return Field("确认(F1)", off, total, data[:total].hex(" ").upper(),
+                 f"信道状态字 0x{status[::-1].hex().upper()}（0=忙/1=闲）；等待时间 {wait} s",
+                 note, KIND_DATA), total
 
 
 def _dec_afn00_f2(data: bytes, off: int) -> tuple[Field, int]:
@@ -251,6 +259,126 @@ def _dec_afnf1_f1_up(data: bytes, off: int) -> tuple[Field, int]:
                  children=[child]), 3 + L
 
 
+
+# ── 补充解码器（覆盖 2013/2019 常见查询、控制、路由类） ──
+
+def _dec_addr6_simple(name: str, data: bytes, off: int, note: str = "6B BCD") -> tuple[Field, int]:
+    if len(data) < 6:
+        return _raw_field(name, data, off), len(data)
+    from .frame import _bcd_str
+    return Field(name, off, 6, data[:6].hex(" ").upper(), _bcd_str(data[:6]), note, KIND_DATA), 6
+
+
+def _dec_afn03_f4_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    return _dec_addr6_simple("主节点地址(F4)", data, off)
+
+
+def _dec_afn03_f6_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    if not data:
+        return _raw_field("主节点干扰状态(F6)", data, off), 0
+    v = data[0]
+    txt = "没有干扰" if v == 0 else ("有干扰" if v == 1 else f"保留({v})")
+    return Field("主节点干扰状态(F6)", off, 1, f"{v:02X}", txt, "1B", KIND_DATA), 1
+
+
+def _dec_afn03_f7_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    if len(data) < 2:
+        return _raw_field("从节点监控最大超时时间(F7)", data, off), len(data)
+    t = _int_le(data[:2])
+    return Field("从节点监控最大超时时间(F7)", off, 2, data[:2].hex(" ").upper(),
+                 f"{t} s", "BIN 2B", KIND_DATA), 2
+
+
+def _dec_afn03_f8_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    if len(data) < 2:
+        return _raw_field("无线通信参数(F8)", data, off), len(data)
+    ch, pwr = data[0], data[1]
+    pwr_txt = {0: "最高", 1: "次高", 2: "次低", 3: "最低"}.get(pwr, f"保留({pwr})")
+    return Field("无线通信参数(F8)", off, 2, data[:2].hex(" ").upper(),
+                 f"信道组 {ch} · 发射功率 {pwr_txt}", "1B信道组+1B功率", KIND_DATA), 2
+
+
+def _dec_afn05_f1_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    return _dec_addr6_simple("设置主节点地址(F1)", data, off)
+
+
+def _dec_afn05_f2(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    if not data:
+        return Field("允许/禁止从节点上报(F2)", off, 0, "", "无数据", "", KIND_DATA), 0
+    v = data[0]
+    txt = "允许上报" if v == 1 else ("禁止上报" if v == 0 else f"值={v}")
+    return Field("允许/禁止从节点上报(F2)", off, 1, f"{v:02X}", txt, "1B", KIND_DATA), 1
+
+
+def _dec_afn10_f1_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    if len(data) < 2:
+        return _raw_field("从节点数量(F1)", data, off), len(data)
+    n = _int_le(data[:2])
+    return Field("从节点数量(F1)", off, 2, data[:2].hex(" ").upper(), f"{n} 个", "BIN 2B", KIND_DATA), 2
+
+
+def _dec_afn10_f2_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """从节点信息：总数量 + 本帧数量 + 每节点(6B地址 + 1B协议? 或按标准变长)。简化展示。"""
+    if len(data) < 2:
+        return _raw_field("从节点信息(F2)", data, off), len(data)
+    # 常见格式：2B总数量 + 1B本帧数 + 节点列表（每节点 6B地址+附加）
+    total = _int_le(data[:2]) if len(data) >= 2 else 0
+    return Field("从节点信息(F2)", off, len(data), data.hex(" ").upper(),
+                 f"总数量约 {total} · 共 {len(data)} 字节（详细结构按标准/HEX）",
+                 "建议对照标准表查看", KIND_DATA), len(data)
+
+
+def _dec_afn12_simple(data: bytes, off: int, name: str) -> tuple[Field, int]:
+    # 重启/暂停/恢复通常无数据单元或仅确认
+    if not data:
+        return Field(name, off, 0, "", "无数据单元", "", KIND_DATA), 0
+    return _raw_field(name, data, off), len(data)
+
+
+def _dec_afn12_f1(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    return _dec_afn12_simple(data, off, "路由控制·重启(F1)")
+
+
+def _dec_afn12_f2(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    return _dec_afn12_simple(data, off, "路由控制·暂停(F2)")
+
+
+def _dec_afn12_f3(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    return _dec_afn12_simple(data, off, "路由控制·恢复(F3)")
+
+
+def _dec_afn13_f1(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """监控从节点：通常含协议类型 + 长度 + 报文，类似转发。"""
+    if len(data) < 2:
+        return _raw_field("监控从节点(F1)", data, off), len(data)
+    proto = data[0]
+    L = data[1]
+    if 2 + L > len(data):
+        return _raw_field("监控从节点(F1)", data, off), len(data)
+    content = data[2:2 + L]
+    child = _embed_proto_field("监控报文", proto, content, off + 2)
+    return Field("监控从节点(F1)", off, 2 + L, data[:2 + L].hex(" ").upper(),
+                 f"{consts.PROTO_TYPE.get(proto, '保留')} · {L} 字节",
+                 "1B协议+1B长度+内容", KIND_DATA, children=[child]), 2 + L
+
+
+def _dec_afn15_f1(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """文件传输方式1：简化展示总长与前几字节。"""
+    if len(data) < 4:
+        return _raw_field("文件传输方式1(F1)", data, off), len(data)
+    # 常见：段号/总段/数据等，按 HEX + 长度提示
+    return Field("文件传输方式1(F1)", off, len(data), data.hex(" ").upper(),
+                 f"文件传输数据 {len(data)} 字节（段号等字段请对照标准）",
+                 "详细分包结构见标准 AFN=15H", KIND_DATA), len(data)
+
+
+def _dec_afn06_f5_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    if len(data) < 2:
+        return _raw_field("上报从节点事件(F5)", data, off), len(data)
+    # 常见含地址 + 事件内容
+    return Field("上报从节点事件(F5)", off, len(data), data.hex(" ").upper(),
+                 f"事件上报 {len(data)} 字节", "含从节点地址与事件数据", KIND_DATA), len(data)
+
 # (AFN, Fn, 上行?) → 解码器；up=None 表示上下行同构
 _DECODERS: dict[tuple[int, int, int | None], object] = {
     (0x00, 1, None): _dec_afn00_f1,
@@ -268,6 +396,21 @@ _DECODERS: dict[tuple[int, int, int | None], object] = {
     (0x14, 4, None): _dec_afn14_f4,
     (0xF1, 1, 0): _dec_afnf1_f1_down,
     (0xF1, 1, 1): _dec_afnf1_f1_up,
+    # 补充
+    (0x03, 4, 1): _dec_afn03_f4_up,
+    (0x03, 6, 1): _dec_afn03_f6_up,
+    (0x03, 7, 1): _dec_afn03_f7_up,
+    (0x03, 8, 1): _dec_afn03_f8_up,
+    (0x05, 1, 0): _dec_afn05_f1_down,
+    (0x05, 2, None): _dec_afn05_f2,
+    (0x06, 5, 1): _dec_afn06_f5_up,
+    (0x10, 1, 1): _dec_afn10_f1_up,
+    (0x10, 2, 1): _dec_afn10_f2_up,
+    (0x12, 1, 0): _dec_afn12_f1,
+    (0x12, 2, 0): _dec_afn12_f2,
+    (0x12, 3, 0): _dec_afn12_f3,
+    (0x13, 1, None): _dec_afn13_f1,
+    (0x15, 1, None): _dec_afn15_f1,
 }
 
 # 无数据单元的 Fn（请求类常见）
@@ -275,7 +418,7 @@ _NO_DATA_FN = {(0x04, 2), (0x05, 3), (0x14, 1)}
 
 
 def decode_data_units(afn: int, up: bool, fns: list[tuple[int, int]],
-                      data: bytes, base_off: int) -> tuple[list[Field], list[str]]:
+                      data: bytes, base_off: int, protocol_version: str = "2019") -> tuple[list[Field], list[str]]:
     """按 Fn 顺序解析数据单元。返回 (字段列表, 错误列表)。"""
     errors: list[str] = []
     fields: list[Field] = []
@@ -309,7 +452,11 @@ def decode_data_units(afn: int, up: bool, fns: list[tuple[int, int]],
             pos = n
             continue
         try:
-            field, consumed = decoder(rest, base_off + pos)
+            # 部分解码器支持 version 参数（如确认 F1）
+            try:
+                field, consumed = decoder(rest, base_off + pos, protocol_version)
+            except TypeError:
+                field, consumed = decoder(rest, base_off + pos)
         except Exception as exc:  # 防御：任何解码异常都不得中断整体解析
             errors.append(f"F{fn} 数据单元解码异常：{exc}")
             field = _raw_field(f"F{fn} 数据单元", rest, base_off + pos)

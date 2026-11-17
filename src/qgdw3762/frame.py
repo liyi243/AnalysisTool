@@ -30,8 +30,8 @@ def _bs_bits(value: int, names: list[str]) -> str:
     return "；".join(parts)
 
 
-def parse_frame(raw: bytes, start: int = 0, source_line: int = 0) -> ParsedFrame:
-    fr = ParsedFrame(raw=bytes(raw), start=start, source_line=source_line)
+def parse_frame(raw: bytes, start: int = 0, source_line: int = 0, protocol_version: str = "2019") -> ParsedFrame:
+    fr = ParsedFrame(raw=bytes(raw), start=start, source_line=source_line, protocol_version=protocol_version)
     n = len(raw)
     errors: list[str] = []
     if n < 15:
@@ -64,7 +64,7 @@ def parse_frame(raw: bytes, start: int = 0, source_line: int = 0) -> ParsedFrame
     direction = "上行(模块→集中器)" if dir_up else "下行(集中器→模块)"
     fr.direction = direction
     fr.ctrl_byte = c
-    fr.ctrl_name = f"{'上行' if dir_up else '下行'}·{'启动站' if prm else '从动站'}·{consts.comm_type_name(comm)}"
+    fr.ctrl_name = f"{'上行' if dir_up else '下行'}·{'启动站' if prm else '从动站'}·{consts.comm_type_name(comm, protocol_version)}"
     fields.append(Field(
         "控制域C", 3, 1, f"{c:02X}", fr.ctrl_name,
         f"DIR={int(dir_up)}({'上行' if dir_up else '下行'})，PRM={int(prm)}({'启动站' if prm else '从动站'})",
@@ -74,7 +74,7 @@ def parse_frame(raw: bytes, start: int = 0, source_line: int = 0) -> ParsedFrame
                   "1=模块上行" if dir_up else "0=集中器下行", "D7", KIND_CTRL),
             Field("PRM 启动标志位", 3, 1, f"{c:02X}",
                   "1=启动站" if prm else "0=从动站", "D6", KIND_CTRL),
-            Field("通信方式", 3, 1, f"{c:02X}", consts.comm_type_name(comm),
+            Field("通信方式", 3, 1, f"{c:02X}", consts.comm_type_name(comm, protocol_version),
                   "D5~D0", KIND_CTRL),
         ]))
 
@@ -195,7 +195,7 @@ def parse_frame(raw: bytes, start: int = 0, source_line: int = 0) -> ParsedFrame
 
     # ── 数据单元 ────────────────────────────────────────────
     du = raw[pos:n - 2]
-    du_fields, du_errors = applayer.decode_data_units(afn, dir_up, fns, du, pos)
+    du_fields, du_errors = applayer.decode_data_units(afn, dir_up, fns, du, pos, protocol_version=protocol_version)
     errors.extend(du_errors)
     if du or fns:
         fields.append(Field(
@@ -227,7 +227,7 @@ def parse_frame(raw: bytes, start: int = 0, source_line: int = 0) -> ParsedFrame
         fn_txt = fname if fname == f"F{fn}" else f"F{fn} {fname}"
         if len(fns) > 1:
             fn_txt += f" 等{len(fns)}个Fn"
-    comm_short = consts.comm_type_name(comm).split("（")[0]
+    comm_short = consts.comm_type_name(comm, protocol_version).split("（")[0]
     fr.summary = (f"{('↑' if dir_up else '↓')}{comm_short} · {fr.afn_name}"
                   + (f" {fn_txt}" if fn_txt else ""))
     fr.errors = errors

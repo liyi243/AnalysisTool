@@ -58,8 +58,15 @@ class FieldTreePanel(QTreeWidget):
         if f.error:
             for c in range(4):
                 item.setBackground(c, QBrush(QColor(239, 68, 68, 36)))
+        tip = f.display_value() or ""
         if f.note:
-            item.setToolTip(3, f.note)
+            tip = (tip + "\n" + f.note).strip()
+        if tip:
+            item.setToolTip(0, tip)
+            item.setToolTip(3, tip)
+        # 原始值也提供完整提示
+        if f.raw:
+            item.setToolTip(2, f.raw)
         self._field_map[id(item)] = f
         for child in f.children:
             item.addChild(self._make_item(child))
