@@ -35,19 +35,30 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -Path "dist\376.2协议解析工具\*" -DestinationPath "376.2-Protocol-Tool-v1.1.0-win64-portable.zip" -Force
-          Get-Item "376.2-Protocol-Tool-v1.1.0-win64-portable.zip" | Select-Object Name, Length
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: 376.2-Protocol-Tool-v1.1.0-win64-portable.zip
+          files: |
+            376.2-Protocol-Tool-v1.1.0-win64-portable.zip
+            installer_out/376.2-Protocol-Tool-v1.1.0-win64-setup.exe
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-portable
-          path: 376.2-Protocol-Tool-v1.1.0-win64-portable.zip
+          name: windows-packages
+          path: |
+            376.2-Protocol-Tool-v1.1.0-win64-portable.zip
+            installer_out/376.2-Protocol-Tool-v1.1.0-win64-setup.exe
