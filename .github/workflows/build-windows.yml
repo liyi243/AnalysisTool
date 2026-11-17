@@ -23,6 +23,9 @@ jobs:
           pip install PySide6-Essentials pyinstaller
 
       - name: Self-test
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: python src/main.py --selftest
 
       - name: Build portable (green) package
