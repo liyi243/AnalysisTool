@@ -1,6 +1,6 @@
 ; Inno Setup script for 376.2 Protocol Analysis Tool
 #define MyAppName "376.2协议解析工具"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "liyi243"
 #define MyAppExeName "376.2协议解析工具.exe"
 
@@ -12,7 +12,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=installer_out
-OutputBaseFilename=376.2-Protocol-Tool-v1.1.0-win64-setup
+OutputBaseFilename=376.2-Protocol-Tool-v1.1.1-win64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

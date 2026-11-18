@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+from app_svc import APP_TITLE, APP_VERSION
 from qgdw3762.model import Field, ParsedFrame, ParseResult
 
 
@@ -43,7 +44,7 @@ def _frame_to_dict(fr: ParsedFrame) -> dict:
 def export_json(result: ParseResult, path: str | Path) -> Path:
     payload = {
         "protocol": "Q/GDW 376.2",
-        "tool": "376.2 协议解析工具 v1.0",
+        "tool": f"{APP_TITLE} v{APP_VERSION}",
         "stats": result.stats,
         "warnings": result.warnings,
         "frames": [_frame_to_dict(f) for f in result.frames],

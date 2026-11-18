@@ -42,13 +42,15 @@ def parse_frame(raw: bytes, start: int = 0, source_line: int = 0, protocol_versi
 
     # ── 起始符 / 长度域 ──────────────────────────────────────
     L = raw[1] | (raw[2] << 8)
+    # L1 = L - 6（用户数据长度）；L<6 时差值为负无意义，做显示保护
+    l1_text = f"L1={L - 6} 字节" if L >= 6 else "无效（L<6）"
     fields: list[Field] = [
         Field("起始符", 0, 1, f"{raw[0]:02X}", "68H", "", KIND_START,
               error=raw[0] != 0x68),
         Field("长度域L", 1, 2, raw[1:3].hex(" ").upper(),
               f"L={L}（整帧总长）", "L = L1+6；L1=用户数据(R+A+AFN+DT+数据)长度",
               KIND_LENGTH,
-              children=[Field("用户数据长度L1", 1, 2, "", f"L1={L - 6} 字节", "",
+              children=[Field("用户数据长度L1", 1, 2, "", l1_text, "",
                               KIND_LENGTH)]),
     ]
     if raw[0] != 0x68:

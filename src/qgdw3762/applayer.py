@@ -54,7 +54,7 @@ def _dec_afn00_f1(data: bytes, off: int, version: str = "2019") -> tuple[Field, 
                  note, KIND_DATA), total
 
 
-def _dec_afn00_f2(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn00_f2(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if not data:
         return Field("否认(F2)", off, 0, "", "（无数据）", "", KIND_ERR), 0
     v = data[0]
@@ -62,7 +62,7 @@ def _dec_afn00_f2(data: bytes, off: int) -> tuple[Field, int]:
                  consts.deny_error_text(v), "1字节", KIND_DATA), 1
 
 
-def _dec_afn02_f1(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn02_f1(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 2:
         return _raw_field("转发通信协议数据帧(F1)", data, off), len(data)
     proto = data[0]
@@ -78,7 +78,7 @@ def _dec_afn02_f1(data: bytes, off: int) -> tuple[Field, int]:
     return f, 2 + L
 
 
-def _dec_afn03_f1_up(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn03_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     n = len(data)
     if n < 8:
         return _raw_field("厂商代码和版本信息(F1)", data, off), n
@@ -94,7 +94,7 @@ def _dec_afn03_f1_up(data: bytes, off: int) -> tuple[Field, int]:
                  note, KIND_DATA), n
 
 
-def _dec_afn03_f2(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn03_f2(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if not data:
         return _raw_field("噪声值(F2)", data, off), 0
     v = data[0] & 0x0F
@@ -110,7 +110,7 @@ def _dec_addr6(name: str, fn: str, data: bytes, off: int) -> tuple[Field, int] |
                  _bcd_str(data[:6]), "BCD 6字节", KIND_DATA), 6
 
 
-def _dec_afn04_f1_down(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn04_f1_down(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if not data:
         return _raw_field("发送测试(F1)", data, off), 0
     v = data[0]
@@ -118,7 +118,7 @@ def _dec_afn04_f1_down(data: bytes, off: int) -> tuple[Field, int]:
                  f"持续时间 {v} s" + ("（停止发送）" if v == 0 else ""), "1B", KIND_DATA), 1
 
 
-def _dec_afn04_f3_down(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn04_f3_down(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 10:
         return _raw_field("报文通信测试(F3)", data, off), len(data)
     L = data[9]
@@ -141,7 +141,7 @@ def _dec_afn04_f3_down(data: bytes, off: int) -> tuple[Field, int]:
                  children=children), 10 + L
 
 
-def _dec_afn06_f1_up(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn06_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if not data:
         return _raw_field("上报从节点信息(F1)", data, off), 0
     n = data[0]
@@ -163,7 +163,7 @@ def _dec_afn06_f1_up(data: bytes, off: int) -> tuple[Field, int]:
                  f"上报 {n} 个从节点", "", KIND_DATA, children=children), need
 
 
-def _dec_afn06_f2_up(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn06_f2_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 6:
         return _raw_field("上报抄读数据(F2)", data, off), len(data)
     seq = _int_le(data[0:2])
@@ -179,7 +179,7 @@ def _dec_afn06_f2_up(data: bytes, off: int) -> tuple[Field, int]:
                  "2B序号+1B协议+2B时长+1B长度+内容", KIND_DATA, children=[child]), 6 + L
 
 
-def _dec_afn06_f3_up(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn06_f3_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if not data:
         return _raw_field("路由工况变动(F3)", data, off), 0
     v = data[0]
@@ -187,7 +187,7 @@ def _dec_afn06_f3_up(data: bytes, off: int) -> tuple[Field, int]:
                  consts.ROUTE_WORK_CHANGE.get(v, f"保留({v})"), "1B", KIND_DATA), 1
 
 
-def _dec_afn14_f1_up(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn14_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 9:
         return _raw_field("路由请求抄读内容(F1)", data, off), len(data)
     from .frame import _bcd_str
@@ -196,7 +196,7 @@ def _dec_afn14_f1_up(data: bytes, off: int) -> tuple[Field, int]:
                  "1B相位+6B地址BCD+2B序号", KIND_DATA), 9
 
 
-def _dec_afn14_f3_up(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn14_f3_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 9:
         return _raw_field("请求依通信延时修正通信数据(F3)", data, off), len(data)
     from .frame import _bcd_str
@@ -217,7 +217,7 @@ def _dec_afn14_f3_up(data: bytes, off: int) -> tuple[Field, int]:
                  "", KIND_DATA, children=children), 9 + L
 
 
-def _dec_afn14_f4(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afn14_f4(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 5:
         return _raw_field("路由请求交采信息(F4)", data, off), len(data)
     t = data[0]
@@ -227,7 +227,7 @@ def _dec_afn14_f4(data: bytes, off: int) -> tuple[Field, int]:
                  f"数据项类型 {tname} · 交采标识 0x{di}", "1B类型+4B标识(低位在前)", KIND_DATA), 5
 
 
-def _dec_afnf1_f1_down(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afnf1_f1_down(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 5:
         return _raw_field("并发抄表(F1)", data, off), len(data)
     proto = data[0]
@@ -241,7 +241,7 @@ def _dec_afnf1_f1_down(data: bytes, off: int) -> tuple[Field, int]:
                  "1B规约+2B保留+2B长度+内容", KIND_DATA, children=[child]), 5 + L
 
 
-def _dec_afnf1_f1_up(data: bytes, off: int) -> tuple[Field, int]:
+def _dec_afnf1_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 3:
         return _raw_field("并发抄表(F1)", data, off), len(data)
     proto = data[0]
@@ -452,11 +452,9 @@ def decode_data_units(afn: int, up: bool, fns: list[tuple[int, int]],
             pos = n
             continue
         try:
-            # 部分解码器支持 version 参数（如确认 F1）
-            try:
-                field, consumed = decoder(rest, base_off + pos, protocol_version)
-            except TypeError:
-                field, consumed = decoder(rest, base_off + pos)
+            # _DECODERS 表中所有解码器均接收第三参数 protocol_version（未使用者忽略之），
+            # 直接统一传参，避免用 except TypeError 探测签名而掩盖解码器内部真实 TypeError
+            field, consumed = decoder(rest, base_off + pos, protocol_version)
         except Exception as exc:  # 防御：任何解码异常都不得中断整体解析
             errors.append(f"F{fn} 数据单元解码异常：{exc}")
             field = _raw_field(f"F{fn} 数据单元", rest, base_off + pos)

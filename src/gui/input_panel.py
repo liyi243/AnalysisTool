@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Callable, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QButtonGroup, QFileDialog, QHBoxLayout, QLabel, QPlainTextEdit,
     QPushButton, QStackedWidget, QVBoxLayout, QWidget,
@@ -74,7 +74,12 @@ class InputPanel(QWidget):
         self._stack = QStackedWidget()
         self._editor = QPlainTextEdit()
         self._editor.setPlaceholderText(PLACEHOLDER)
-        self._editor.textChanged.connect(self._update_stats)
+        # 统计防抖：按键后 300ms 内只算一次，避免每次按键全文扫描
+        self._stats_timer = QTimer(self)
+        self._stats_timer.setSingleShot(True)
+        self._stats_timer.setInterval(300)
+        self._stats_timer.timeout.connect(self._update_stats)
+        self._editor.textChanged.connect(self._stats_timer.start)   # start() 兼具重启语义
         self._stack.addWidget(self._editor)          # idx 0: hex（单帧/多帧共用）
 
         file_page = QWidget()
@@ -162,11 +167,10 @@ class InputPanel(QWidget):
         self._editor.setPlainText(text)
 
     def _update_stats(self) -> None:
-        import re
-        pairs = re.findall(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{2}(?![0-9A-Fa-f])",
-                           self._editor.toPlainText())
-        n = len(pairs)
-        self._stats.setText(f"{n} 字节" if n else "0 字节")
+        # 与解析引擎同口径：复用 extract_bytes 提取的字节数（含紧凑 hex 如 "682500"）
+        from qgdw3762.textutil import extract_bytes
+        data, _ = extract_bytes(self._editor.toPlainText())
+        self._stats.setText(f"{len(data)} 字节")
 
     # ── 文件 ────────────────────────────────────────────────────
     def _browse(self) -> None:
@@ -175,8 +179,14 @@ class InputPanel(QWidget):
             self.load_file(path)
 
     def load_file(self, path: str) -> None:
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            # 拖入后文件被移动/删除：给出提示且不触发解析
+            self._file_path = ""
+            self._file_info.setText("⚠ 无法读取文件，可能已被移动或删除")
+            return
         self._file_path = path
-        size = os.path.getsize(path)
         self._file_info.setText(f"📄 {os.path.basename(path)}\n{size:,} 字节")
         self.fileChosen.emit(path)
 

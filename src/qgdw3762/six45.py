@@ -58,42 +58,29 @@ def _di_name(di_bytes: bytes) -> str:
     return DI645.get(di_le, f"数据标识 0x{di_bytes[:2][::-1].hex().upper()}")
 
 
-def locate_645(data: bytes) -> Optional[int]:
-    """在 data 中定位一帧 CS 通过的 645 报文，返回其起始偏移；找不到返回 None。"""
-    n = len(data)
-    for i in range(0, max(1, n - 11)):
-        if data[i] != 0x68 or i + 2 >= n or data[i + 2] != 0x68:
-            continue
-        L = data[i + 1]
-        total = 6 + L
-        end = i + total - 1
-        if L < 12 or end >= n or data[end] != 0x16:
-            continue
-        cs_idx = end - 1
-        if sum(data[i + 3 : cs_idx]) & 0xFF == data[cs_idx]:
-            return i
-    return None
-
-
 def parse_645(data: bytes, offset: int = 0) -> Optional[Field]:
     """解析一帧 645 报文（默认 data 就是完整帧，offset 为其在宿主帧中的偏移）。"""
     n = len(data)
-    if n < 14 or data[0] != 0x68 or data[2] != 0x68 or data[n - 1] != 0x16:
+    # 结构下限 12 字节 = 68 L 68 C A(6) CS 16（无用户数据的最短帧）；
+    # 标准异常应答帧 68 L 68 C A(6) ERR CS 16 共 13 字节，不得拒收
+    if n < 12 or data[0] != 0x68 or data[2] != 0x68 or data[n - 1] != 0x16:
         return None
     L = data[1]
+    # 合法帧总字节数 = L + 4（L 覆盖 C~CS，另有 68 L 68 与 16 共 4 字节）；不符视为残帧
+    if n != L + 4:
+        return None
     cs_ok = sum(data[3 : n - 2]) & 0xFF == data[n - 2]
     c = data[3]
     up = bool(c & 0x80)
     from_station = bool(c & 0x40)
     more = bool(c & 0x20)
-    abnormal = (c & 0xC0) == 0xC0 and bool(c & 0x20)
+    # 异常应答 = 请求码|C0H：D7=1（上行）且 D6=1（从站异常标志）；
+    # D5 是后续帧标志，与异常判定无关，不能参与条件
+    abnormal = (c & 0xC0) == 0xC0
     func = c & 0x1F
     func_name = C645_FUNC.get(func, f"保留(0x{func:02X})")
-    if from_station:
-        if abnormal:
-            func_name = f"异常应答(请求功能 0x{func:02X})"
-        elif up and (c & 0x60) == 0x00:
-            func_name = f"{func_name}正常应答"
+    if from_station and abnormal:
+        func_name = f"异常应答(请求功能 0x{func:02X})"
     addr = _fmt_bcd_addr(data[4:10])
     di_part = data[10 : n - 2]
 

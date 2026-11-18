@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
@@ -13,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_svc import exporter
+from app_svc import APP_TITLE, APP_VERSION, exporter
 from app_svc.pipeline import parse_file, parse_text
 from gui.field_tree import FieldTreePanel
 from gui.hex_viewer import HexByteMapViewer
@@ -35,12 +36,42 @@ def _panel() -> QFrame:
     return f
 
 
+class ParseWorker(QThread):
+    """后台解析线程：run() 内调用纯 Python 解析引擎（无线程安全问题），
+    结果 / 失败经信号-槽队列化送回 UI 线程，避免大文件解析冻结界面。"""
+
+    succeeded = Signal(object, float)   # (ParseResult, 耗时 ms)
+    failed = Signal(str)                # 失败消息（如文件读取 OSError）
+
+    def __init__(self, task: Callable[[], ParseResult], generation: int = 0,
+                 source: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._task = task
+        self.generation = generation    # 触发本次解析时的代际号
+        self.source = source            # 来源标签（文件名，文本输入为空）
+
+    def run(self) -> None:
+        t0 = time.perf_counter()
+        try:
+            result = self._task()
+        except OSError as e:
+            self.failed.emit(f"读取文件失败：{e}")
+            return
+        except Exception as e:          # 兜底：引擎异常不应拖垮线程
+            self.failed.emit(f"解析失败：{e}")
+            return
+        ms = (time.perf_counter() - t0) * 1000
+        self.succeeded.emit(result, ms)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._result: ParseResult | None = None
         self._frames: list[ParsedFrame] = []
         self._current: ParsedFrame | None = None
+        self._worker: ParseWorker | None = None   # 当前后台解析线程
+        self._generation = 0                      # 解析代际号：新解析/清空时递增
         self.setAcceptDrops(True)
         self._build_ui()
         self._wire()
@@ -57,9 +88,10 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_topbar())
         root.addWidget(self._build_body(), 1)
         self.statusBar().showMessage("就绪")
-        ver = QLabel("v1.1.0 · Q/GDW 376.2")
+        ver = QLabel(f"v{APP_VERSION} · Q/GDW 376.2")
         ver.setObjectName("mutedText")
         self.statusBar().addPermanentWidget(ver)
+        self._version_label = ver
 
     def _build_topbar(self) -> QWidget:
         bar = QWidget()
@@ -257,7 +289,7 @@ class MainWindow(QMainWindow):
             self.input.set_text(samples[0][1])
             self.on_parse()
 
-    # ── 解析 ────────────────────────────────────────────────────
+    # ── 解析（后台线程执行，结果经信号回到 UI 线程）─────────────
     def on_parse(self) -> None:
         mode = self.input.current_mode()
         if mode == 2:
@@ -268,31 +300,64 @@ class MainWindow(QMainWindow):
             self.input.flash_invalid()
             self.statusBar().showMessage("输入为空，请粘贴报文 hex 或选择样例", 4000)
             return
-        self.input.set_busy(True)
-        QApplication.processEvents()
-        t0 = time.perf_counter()
-        result = parse_text(text, protocol_version=self._current_version())
-        ms = (time.perf_counter() - t0) * 1000
-        self.input.set_busy(False)
-        self._apply_result(result, ms)
+        version = self._current_version()
+
+        def task() -> ParseResult:
+            return parse_text(text, protocol_version=version)
+
+        self._start_parse(task)
 
     def on_parse_file(self) -> None:
         path = getattr(self.input, "_file_path", "")
         if not path:
             self.statusBar().showMessage("请先选择报文文件", 4000)
             return
-        self.input.set_busy(True)
-        QApplication.processEvents()
-        t0 = time.perf_counter()
-        try:
-            result = parse_file(path, protocol_version=self._current_version())
-        except OSError as e:
-            self.input.set_busy(False)
-            self.statusBar().showMessage(f"读取文件失败：{e}", 5000)
+        version = self._current_version()
+
+        def task() -> ParseResult:
+            return parse_file(path, protocol_version=version)   # OSError 由 worker 兜底
+
+        self._start_parse(task, source=Path(path).name)
+
+    def _start_parse(self, task: Callable[[], ParseResult], source: str = "") -> None:
+        """启动后台解析线程；运行中重复触发（按钮/Ctrl+Enter）直接忽略。"""
+        if self._worker is not None and self._worker.isRunning():
+            self.statusBar().showMessage("正在解析中，请稍候…", 3000)
             return
-        ms = (time.perf_counter() - t0) * 1000
+        self._generation += 1
+        worker = ParseWorker(task, generation=self._generation, source=source)
+        worker.succeeded.connect(self._on_parse_succeeded)
+        worker.failed.connect(self._on_parse_failed)
+        worker.finished.connect(worker.deleteLater)
+        self._worker = worker
+        self.input.set_busy(True)
+        worker.start()
+
+    def _on_parse_succeeded(self, result: ParseResult, ms: float) -> None:
+        worker = self.sender()
+        if worker is not self._worker:
+            return                          # 旧线程的迟到结果，已有新解析接替
+        self._worker = None
         self.input.set_busy(False)
-        self._apply_result(result, ms, source=Path(path).name)
+        if worker.generation != self._generation:
+            return                          # 已过期（清空/更新解析），不回填界面
+        self._apply_result(result, ms, source=worker.source)
+
+    def _on_parse_failed(self, message: str) -> None:
+        worker = self.sender()
+        if worker is not self._worker:
+            return
+        self._worker = None
+        self.input.set_busy(False)
+        if worker.generation != self._generation:
+            return
+        self.statusBar().showMessage(message, 5000)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """窗口关闭前等待后台线程结束，避免 "QThread: Destroyed while running"。"""
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.wait()
+        super().closeEvent(event)
 
     def _on_file(self, path: str) -> None:
         self.on_parse_file()
@@ -448,7 +513,18 @@ class MainWindow(QMainWindow):
 
     def _on_version_changed(self, _idx: int = 0) -> None:
         ver = self._current_version()
-        self.statusBar().showMessage(f"已切换协议版本：Q/GDW 376.2-{ver}，下次解析生效", 4000)
+        busy = self._worker is not None and self._worker.isRunning()
+        if self._frames and not busy:
+            # 已有解析结果时自动按新版本重解析，避免界面残留旧版本结果造成误读
+            self.statusBar().showMessage(
+                f"已切换协议版本：Q/GDW 376.2-{ver}，正在按新版本重新解析…", 4000)
+            self.on_parse()
+        elif self._frames:
+            self.statusBar().showMessage(
+                f"已切换协议版本：Q/GDW 376.2-{ver}，当前解析完成后请重新解析", 6000)
+        else:
+            self.statusBar().showMessage(
+                f"已切换协议版本：Q/GDW 376.2-{ver}，下次解析生效", 4000)
 
 
     def _copy_current_hex(self) -> None:
@@ -462,7 +538,7 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.information(
             self, "关于",
-            "<b>376.2 协议解析工具 v1.1.0</b><br><br>"
+            f"<b>{APP_TITLE} v{APP_VERSION}</b><br><br>"
             "面向 Q/GDW 376.2《集中器本地通信模块接口协议》的报文解析工具。<br>"
             "支持 2013 / 2019 版本切换、单帧 / 多帧字节流 / 文本文件提取解析，"
             "链路层逐字段拆解、应用层 AFN 数据单元解析（已补充更多解码器）、"
@@ -470,6 +546,7 @@ class MainWindow(QMainWindow):
             "解析引擎与 GUI 解耦，预留 DLT645 / 376.1 / 698 协议扩展接口。")
 
     def _on_clear(self) -> None:
+        self._generation += 1              # 使在途解析结果作废，不回填界面
         self._result = None
         self._frames = []
         self._current = None

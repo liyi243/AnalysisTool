@@ -15,12 +15,20 @@ SRC = Path(__file__).resolve().parent
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-APP_VERSION = "1.0.0"
-APP_TITLE = "376.2 协议解析工具"
+# 版本号与产品名统一定义在 app_svc 包（GUI 状态栏 / 关于 / 导出共用）
+from app_svc import APP_TITLE, APP_VERSION
 
 
 def run_selftest() -> int:
     """内置样例自测：解析全部样例帧并输出结果。"""
+    import os
+    import sys
+    # windowed 打包（console=False）下 sys.stdout 为 None，print 会抛异常；
+    # 重定向到空设备，保证打包后的 exe --selftest 仍可用退出码验证
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
     from qgdw3762.samples import SAMPLES, sample_report
     ok = True
     for name, hexs in SAMPLES:

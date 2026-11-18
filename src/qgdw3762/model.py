@@ -48,14 +48,17 @@ class Field:
         """返回覆盖指定字节偏移的最深层字段（同级取先出现者）。"""
         best: Optional[Field] = None
         best_depth = -1
-        stack: list[tuple["Field", int]] = [(self, 0)]
-        while stack:
-            f, depth = stack.pop(0)
+        # 广度优先遍历；用头指针前移代替 pop(0)，避免列表头部弹出 O(n) 开销
+        queue: list[tuple["Field", int]] = [(self, 0)]
+        head = 0
+        while head < len(queue):
+            f, depth = queue[head]
+            head += 1
             if f.offset <= byte_index < f.offset + f.length:
                 if depth > best_depth:
                     best, best_depth = f, depth
             for c in f.children:
-                stack.append((c, depth + 1))
+                queue.append((c, depth + 1))
         return best
 
 
@@ -96,10 +99,14 @@ class ParsedFrame:
 
 @dataclass
 class FrameCandidate:
-    """扫描器定位出的帧候选（解析前的中间产物）。"""
+    """扫描器定位出的帧候选（解析前的中间产物）。
 
-    data: bytes          # 候选帧字节
+    为避免噪声/损坏流下的内存放大，不复制帧字节，仅记录位置与长度；
+    需要帧字节时由调用方按 source[start:start+length] 切片。
+    """
+
     start: int           # 在源流中的偏移
+    length: int          # 候选帧字节长度
     source_line: int = 0
     reason: str = ""     # 无效原因（仅当校验失败）
 

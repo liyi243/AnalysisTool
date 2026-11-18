@@ -33,6 +33,11 @@ class HexByteMapViewer(QWidget):
         self._mono = QFont("Cascadia Mono")
         self._mono.setStyleHint(QFont.StyleHint.Monospace)
         self._mono.setPixelSize(13)
+        # 绘制用字体在构造时创建并缓存，避免每次 paintEvent 重复分配
+        self._ruler_font = QFont(self._mono)
+        self._ruler_font.setPixelSize(10)
+        self._hint_font = QFont(self.font())
+        self._hint_font.setPixelSize(11)
         fm = QFontMetrics(self._mono)
         self._cw = fm.horizontalAdvance("00") + 10   # 字节单元格宽
         self._rh = 26                                 # 行高
@@ -112,9 +117,7 @@ class HexByteMapViewer(QWidget):
 
         # 列号标尺
         p.setPen(QColor(TXT_MUTED))
-        ruler_font = QFont(self._mono)
-        ruler_font.setPixelSize(10)
-        p.setFont(ruler_font)
+        p.setFont(self._ruler_font)
         for c in range(16):
             cx = x0 + self._offset_w + c * self._cw + 2
             p.drawText(QRect(cx, y0, self._cw - 4, self._rh - 6),
@@ -175,9 +178,7 @@ class HexByteMapViewer(QWidget):
 
         # 底部提示
         p.setPen(QColor(TXT_MUTED))
-        hint_font = QFont(self.font())
-        hint_font.setPixelSize(11)
-        p.setFont(hint_font)
+        p.setFont(self._hint_font)
         p.drawText(QRect(x0, self.height() - 26, self.width() - x0 * 2, 20),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "悬停查看字段含义 · 点击定位字段树")
