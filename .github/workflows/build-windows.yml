@@ -6,6 +6,11 @@ on:
     tags:
       - 'v*'
 
+# 显式授予写权限：softprops/action-gh-release 需以此创建 Release 并上传产物
+# （仓库默认工作流权限为只读时，缺此声明会报 "Resource not accessible by integration"）
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
