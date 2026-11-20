@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from app_svc import APP_TITLE, APP_VERSION
+from qgdw3762.flows import group_frames
 from qgdw3762.model import Field, ParsedFrame, ParseResult
 
 
@@ -42,11 +43,29 @@ def _frame_to_dict(fr: ParsedFrame) -> dict:
 
 
 def export_json(result: ParseResult, path: str | Path) -> Path:
+    sessions, groups = group_frames(result.frames)
     payload = {
         "protocol": "Q/GDW 376.2",
         "tool": f"{APP_TITLE} v{APP_VERSION}",
         "stats": result.stats,
         "warnings": result.warnings,
+        "flows": [
+            {
+                "name": g.name,
+                "sessions": [
+                    {
+                        "index": s.index,
+                        "frame_numbers": [k + 1 for k in s.frame_idx],  # 1 基帧号
+                        "afn": s.afn,
+                        "fn": s.fn,
+                        "label": s.label,
+                        "resp": {True: "确认", False: "否认", None: None}[s.resp_ok],
+                    }
+                    for s in g.sessions
+                ],
+            }
+            for g in groups
+        ],
         "frames": [_frame_to_dict(f) for f in result.frames],
     }
     p = Path(path)
@@ -77,6 +96,17 @@ def render_text(result: ParseResult) -> str:
     if result.warnings:
         lines.append("⚠ 告警:")
         lines.extend(f"  - {w}" for w in result.warnings)
+        lines.append("")
+    # 流程会话概览（组帧）
+    sessions, groups = group_frames(result.frames)
+    if len(sessions) > 1:
+        lines.append("◈ 流程会话（组帧）")
+        for g in groups:
+            lines.append(f"  ▶ {g.name}（{len(g.sessions)} 步）")
+            for s in g.sessions:
+                frs = "↔".join(f"#{k + 1}" for k in s.frame_idx)
+                mark = {True: "✓", False: "✗", None: ""}[s.resp_ok]
+                lines.append(f"      {frs}  {s.label} {mark}")
         lines.append("")
     for i, fr in enumerate(result.frames, 1):
         src = f"（来源行 {fr.source_line}）" if fr.source_line else ""

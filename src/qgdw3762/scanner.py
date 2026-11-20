@@ -18,6 +18,9 @@ MIN_FRAME_LEN = 15
 # 会产生大量重叠失败候选，全部保留将造成内存与时间放大（拷贝 L 字节切片）。
 # 超出上限后照常扫描，但不再保留失败候选，仅追加一条汇总告警；成功候选不受限。
 MAX_FAILED_CANDIDATES = 1000
+# "帧体不完整"（流末尾截断帧）告警保留上限：噪声/损坏流中大量 0x68 都会触发
+# 该告警，无上限时告警列表可被刷至数万条（GUI 会整体拼接展示）。
+MAX_INCOMPLETE_WARNINGS = 5
 # 直接对源缓冲逐候选求和的累计字节数一旦超过 输入长度×该系数（说明存在大量
 # 重叠失败候选被反复重扫），就一次性构建前缀和，把每次 CS 校验降为 O(1) 查表。
 # 正常单遍流量各帧窗口基本不重叠，不会触发，也就不产生额外内存分配。
@@ -56,6 +59,8 @@ def scan_frames(data: bytes) -> tuple[list[FrameCandidate], list[str]]:
     warnings: list[str] = []
     failed_kept = 0                       # 已保留的 CS 失败候选数
     failed_dropped = 0                    # 超限被丢弃的 CS 失败候选数
+    incomplete_kept = 0                   # 已保留的"帧体不完整"告警数
+    incomplete_dropped = 0                # 超限被丢弃的告警数
     cs_prefix: array | None = None        # 前缀和缓存（惰性构建），[k]=sum(data[:k])
     sum_work = 0                          # 直接求和路径累计累加的字节数
     i = 0
@@ -79,8 +84,12 @@ def scan_frames(data: bytes) -> tuple[list[FrameCandidate], list[str]]:
                 continue
         end = i + L                       # 帧结束位置（不含）
         if end > n:
-            warnings.append(
-                f"偏移 0x{i:X} 处存在起始符但帧体不完整（L={L}，仅剩 {n - i} 字节）")
+            if incomplete_kept < MAX_INCOMPLETE_WARNINGS:
+                warnings.append(
+                    f"偏移 0x{i:X} 处存在起始符但帧体不完整（L={L}，仅剩 {n - i} 字节）")
+                incomplete_kept += 1
+            else:
+                incomplete_dropped += 1
             i += 1
             continue
         if data[end - 1] != 0x16:
@@ -107,6 +116,10 @@ def scan_frames(data: bytes) -> tuple[list[FrameCandidate], list[str]]:
         else:
             failed_dropped += 1
         i += 1                            # 重同步：逐字节推进
+    if incomplete_dropped:
+        warnings.append(
+            f"流末尾存在 {incomplete_kept + incomplete_dropped} 处疑似截断的起始符，"
+            f"仅展示前 {incomplete_kept} 处（多为噪声字节，可忽略）")
     if failed_dropped:
         warnings.append(
             f"CS 校验失败的帧候选过多，仅保留前 {MAX_FAILED_CANDIDATES} 个"

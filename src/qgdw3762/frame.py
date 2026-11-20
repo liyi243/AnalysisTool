@@ -179,6 +179,8 @@ def parse_frame(raw: bytes, start: int = 0, source_line: int = 0, protocol_versi
     fr.afn_byte = afn
     fr.afn_name = consts.afn_name(afn)
     fns = consts.dt_to_fns(dt1, dt2)
+    fr.fns = [fn for fn, _mask in fns]
+    fr.r6_seq = raw[9] if n >= 10 else None       # 信息域R第6字节（偏移9）
     if not fns:
         errors.append("数据单元标识 DT1=0（未指明信息类 Fn）")
     dt_children = []

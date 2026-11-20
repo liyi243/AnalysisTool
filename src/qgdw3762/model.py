@@ -81,6 +81,9 @@ class ParsedFrame:
     afn_byte: int | None = None       # 应用层功能码原始值
     afn_name: str = ""                # AFN 名称
     protocol_version: str = "2019"    # "2013" | "2019"，影响部分字段长度与命名
+    # 结构化便捷字段（供组帧引擎/导出直接读取，避免反解析显示字符串）
+    fns: list[int] = dc_field(default_factory=list)   # DT 解出的全部 Fn（升序）
+    r6_seq: int | None = None         # 信息域 R6 报文序列号（0~255）
 
     @property
     def length(self) -> int:

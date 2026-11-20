@@ -40,11 +40,18 @@ _COMMENT_MARKS = ("//", "#", ";", "；", "--", "——")
 
 
 def _cut_comment(line: str) -> str:
+    """截掉行内注释（在所有注释标记中取**最早出现**的位置）。
+
+    按最早位置而非固定顺序：如 ``68 16 -- 注释 // 说明`` 中 "--" 更靠前，
+    固定顺序若先命中 "//" 会把 "-- 注释 " 留进提取流，注释中的 hex 词
+    （"68 0F ..."）会被误收为报文字节。
+    """
+    cut = len(line)
     for mark in _COMMENT_MARKS:
         idx = line.find(mark)
-        if idx > 0:  # 不裁剪行首（避免吞掉以 # 开头的有效 hex 行场景过窄，>0 更稳）
-            line = line[:idx]
-    return line
+        if 0 < idx < cut:   # 不裁剪行首（避免吞掉以 # 开头的行场景过窄）
+            cut = idx
+    return line[:cut] if cut < len(line) else line
 
 
 def _token_to_pairs(token: str) -> List[str]:

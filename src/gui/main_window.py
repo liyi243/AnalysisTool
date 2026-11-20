@@ -392,12 +392,19 @@ class MainWindow(QMainWindow):
             self._show_frame(self._frames[0])   # 行号未变化时信号不触发，显式刷新
         else:
             self._show_frame(None)
-        self.flow_panel.load_frames(self._frames)
+        # 组帧只算一次：面板与提示共用结果
         from qgdw3762.flows import group_frames
-        n_sess = len(group_frames(self._frames)[0]) if self._frames else 0
-        self._flow_hint.setText(f"{n_sess} 会话" if n_sess else "—")
+        sessions, groups = group_frames(self._frames)
+        self.flow_panel.load_sessions(sessions, groups, len(self._frames))
+        self._flow_hint.setText(f"{len(sessions)} 会话" if sessions else "—")
         if result.warnings:
-            self._diag.setText("⚠ " + "；".join(result.warnings))
+            # 告警截断展示：噪声输入下告警可达数千条，整体拼接会拖垮界面
+            shown = result.warnings[:5]
+            more = len(result.warnings) - len(shown)
+            text = "⚠ " + "；".join(shown)
+            if more > 0:
+                text += f"；…另有 {more} 条告警（详见导出报告）"
+            self._diag.setText(text)
             self._diag.setStyleSheet(f"color:{WARNING};")
         else:
             self._diag.setText("")
@@ -412,7 +419,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{prefix}未检测到有效帧 · 耗时 {ms:.0f} ms", 8000)
 
     def _fill_row(self, row: int, fr: ParsedFrame) -> None:
-        def item(text: str, color: str | None = None, mono: bool = False) -> QTableWidgetItem:
+        def item(text: str, color: str | None = None) -> QTableWidgetItem:
             it = QTableWidgetItem(text)
             if color:
                 it.setForeground(QBrush(QColor(color)))
@@ -435,11 +442,6 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, c, v)
 
     # ── 帧详情 ──────────────────────────────────────────────────
-    def _iter_sessions(self):
-        from qgdw3762.flows import group_frames
-        sessions, _ = group_frames(self._frames)
-        return sessions
-
     def _on_session_clicked(self, session) -> None:
         """点击流程会话 → 选中会话的请求帧。"""
         if session.frame_idx:
@@ -581,6 +583,8 @@ class MainWindow(QMainWindow):
         self._current = None
         self.table.setRowCount(0)
         self._show_frame(None)
+        self.flow_panel.load_sessions([], [], 0)
+        self._flow_hint.setText("—")
         self._list_hint.setText("—")
         self.statusBar().showMessage("已清空", 3000)
 

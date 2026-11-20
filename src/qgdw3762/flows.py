@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dc_field
 
+from .consts import afn_name
 from .model import ParsedFrame
 
 # ── 流程规则表：(AFN, Fn) → (流程名, 步骤说明) ────────────────
@@ -73,29 +74,15 @@ FLOW_RULES: dict[tuple[int, int], tuple[str, str]] = {
 
 
 def msg_seq(fr: ParsedFrame) -> int | None:
-    """提取信息域 R6 报文序列号；解析失败返回 None。"""
-    for f in fr.fields:
-        if f.name == "信息域R":
-            for c in f.children:
-                if c.name == "报文序列号":
-                    try:
-                        return int(c.display_value())
-                    except ValueError:
-                        return None
-    return None
+    """信息域 R6 报文序列号（直接读结构化字段，缺省回退帧内偏移 9）。"""
+    if fr.r6_seq is not None:
+        return fr.r6_seq
+    return fr.raw[9] if len(fr.raw) >= 10 else None
 
 
 def first_fn(fr: ParsedFrame) -> int | None:
-    """提取 DT 解出的首个 Fn。"""
-    for f in fr.fields:
-        if f.name == "数据单元标识DT":
-            v = f.display_value()
-            if v.startswith("F") and "无有效" not in v:
-                try:
-                    return int(v.split("、")[0][1:])
-                except ValueError:
-                    return None
-    return None
+    """DT 解出的首个 Fn（结构化字段，升序）。"""
+    return fr.fns[0] if fr.fns else None
 
 
 def is_up(fr: ParsedFrame) -> bool:
@@ -113,12 +100,7 @@ class Session:
     label: str = ""                 # 如 "AFN=10H F1 从节点数量"
     flow: str = "其他/未归类"
     step: str = ""
-    resp_ok: bool | None = None     # 应答结果：True 确认 / False 否认 / None 无应答或数据应答
-
-    @property
-    def is_query_resp(self) -> bool:
-        """应答是否为数据应答（非确认/否认）。"""
-        return self.resp_ok is None
+    resp_ok: bool | None = None     # True 确认 / False 否认 / None 无应答或数据应答
 
 
 @dataclass
@@ -130,7 +112,14 @@ class FlowGroup:
 
 
 def group_frames(frames: list[ParsedFrame]) -> tuple[list[Session], list[FlowGroup]]:
-    """组帧：配对会话并归类流程。返回（会话列表, 流程分组列表）。"""
+    """组帧：配对会话并归类流程。返回（会话列表, 流程分组列表）。
+
+    配对规则（标准 5.2.1 k，一请求一应答）：
+    - 下行请求：只与**紧随的下一帧**配对，且该帧须为上行、
+      且（AFN=00H 确认/否认 或 R6 序列号与请求相同）；
+    - 上行主动上报：只与紧随的下一帧配对，且该帧须为下行 AFN=00H 确认/否认；
+    - 不匹配/无应答：请求帧独立成会话（resp_ok=None）。
+    """
     sessions: list[Session] = []
     n = len(frames)
     i = 0
@@ -142,8 +131,6 @@ def group_frames(frames: list[ParsedFrame]) -> tuple[list[Session], list[FlowGro
         if afn is not None and fn is not None and (afn, fn) in FLOW_RULES:
             sess.flow, sess.step = FLOW_RULES[(afn, fn)]
         elif afn is not None:
-            from .consts import afn_name
-            sess.label = f"AFN={afn:02X}H"
             sess.step = afn_name(afn)
         if afn == 0x00 and fn in (1, 2):
             # 孤立确认/否认（前面未并入任何会话时才会走到这里）
@@ -151,40 +138,31 @@ def group_frames(frames: list[ParsedFrame]) -> tuple[list[Session], list[FlowGro
             sess.step = "确认" if fn == 1 else "否认"
             sess.resp_ok = fn == 1
 
-        # ── 配对应答 ──
+        # ── 配对应答：只看紧随的一帧 ──
         seq = msg_seq(fr)
         j = i + 1
-        if not is_up(fr):
-            # 下行请求 → 吞掉紧随的上行应答（R6 相同或 AFN=00H 确认/否认）
-            while j < n and is_up(frames[j]):
-                nxt = frames[j]
-                nxt_afn = nxt.afn_byte
-                if nxt_afn == 0x00 or (seq is not None and msg_seq(nxt) == seq):
+        if j < n:
+            nxt = frames[j]
+            if not is_up(fr) and is_up(nxt):
+                # 下行请求 → 上行应答（AFN=00H 或 R6 序列号相同）
+                if nxt.afn_byte == 0x00 or (seq is not None and msg_seq(nxt) == seq):
                     sess.frame_idx.append(j)
-                    if nxt_afn == 0x00:
+                    if nxt.afn_byte == 0x00:
                         nf = first_fn(nxt)
                         sess.resp_ok = (nf == 1) if nf in (1, 2) else None
                     j += 1
-                else:
-                    break
-        else:
-            # 上行主动上报 → 吞掉紧随的下行确认
-            while j < n and not is_up(frames[j]):
-                nxt = frames[j]
-                if nxt.afn_byte == 0x00:
-                    sess.frame_idx.append(j)
-                    nf = first_fn(nxt)
-                    sess.resp_ok = (nf == 1) if nf in (1, 2) else None
-                    j += 1
-                else:
-                    break
+            elif is_up(fr) and not is_up(nxt) and nxt.afn_byte == 0x00:
+                # 上行主动上报 → 下行确认/否认
+                sess.frame_idx.append(j)
+                nf = first_fn(nxt)
+                sess.resp_ok = (nf == 1) if nf in (1, 2) else None
+                j += 1
         # 会话标签
-        if not sess.label:
-            fn_txt = f"F{fn}" if fn is not None else "?"
-            resp_txt = {True: "→ 确认", False: "→ 否认", None: ""}[sess.resp_ok]
-            sess.label = f"AFN={afn:02X}H {fn_txt} {sess.step} {resp_txt}".strip()
-        else:
-            sess.label += {True: " → 确认", False: " → 否认", None: ""}[sess.resp_ok]
+        fn_txt = f"F{fn}" if fn is not None else "?"
+        resp_txt = {True: "→ 确认", False: "→ 否认", None: ""}[sess.resp_ok]
+        name_txt = sess.step or (afn_name(afn) if afn is not None else "")
+        sess.label = f"AFN={afn:02X}H {fn_txt} {name_txt} {resp_txt}".strip() \
+            if afn is not None else "(未解析帧)"
         sessions.append(sess)
         i = j
 

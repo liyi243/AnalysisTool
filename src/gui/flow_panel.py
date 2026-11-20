@@ -1,15 +1,13 @@
 """流程会话面板：按业务流程分组展示组帧结果，点击会话定位帧列表。"""
 from __future__ import annotations
 
-from typing import Optional
-
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QTreeWidget, QTreeWidgetItem
 
-from qgdw3762.flows import Session, group_frames
+from qgdw3762.flows import FlowGroup, Session, group_frames
 from qgdw3762.model import ParsedFrame
-from .theme import ACCENT_HOVER, SUCCESS, TXT_MUTED, WARNING
+from .theme import ACCENT_HOVER, TXT_MUTED, WARNING
 
 FLOW_ACCENT = {  # 流程名 → 显示色（未列出的用默认）
     "模块识别": "#38BDF8",
@@ -36,16 +34,22 @@ class FlowTreePanel(QTreeWidget):
         self._session_map: dict[int, Session] = {}
 
     def load_frames(self, frames: list[ParsedFrame]) -> None:
+        """便捷入口：由帧列表自行组帧（未与主窗口共用计算时使用）。"""
+        sessions, groups = group_frames(frames)
+        self.load_sessions(sessions, groups, len(frames))
+
+    def load_sessions(self, sessions: list[Session], groups: list[FlowGroup],
+                      frame_count: int) -> None:
+        """载入组帧结果（主窗口已算好时直接传入，避免重复计算）。"""
         self.clear()
         self._session_map.clear()
-        if not frames:
-            hint = QTreeWidgetItem(["组帧：多帧交互报文解析后，此处按流程（识别/档案同步/注册等）分组展示"])
+        if not frame_count:
+            hint = QTreeWidgetItem(["解析后此处按流程（识别/档案同步/注册等）分组展示交互会话"])
             hint.setForeground(0, QBrush(QColor(TXT_MUTED)))
             self.addTopLevelItem(hint)
             return
-        sessions, groups = group_frames(frames)
-        if len(sessions) <= 1 and len(groups) <= 1:
-            hint = QTreeWidgetItem([f"共 {len(frames)} 帧，未形成多帧交互流程"])
+        if len(sessions) <= 1:
+            hint = QTreeWidgetItem([f"共 {frame_count} 帧，未形成多帧交互流程"])
             hint.setForeground(0, QBrush(QColor(TXT_MUTED)))
             self.addTopLevelItem(hint)
             return
