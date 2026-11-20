@@ -116,7 +116,6 @@ def _dec_afn03_f2(data: bytes, off: int, version: str = "2019") -> tuple[Field, 
 def _dec_addr6(name: str, fn: str, data: bytes, off: int) -> tuple[Field, int] | None:
     if len(data) < 6:
         return None
-    from .frame import _bcd_str
     return Field(f"{name}({fn})", off, 6, data[:6].hex(" ").upper(),
                  _bcd_le(data[:6]), "BCD 6字节", KIND_DATA), 6
 
@@ -135,7 +134,6 @@ def _dec_afn04_f3_down(data: bytes, off: int, version: str = "2019") -> tuple[Fi
     L = data[9]
     if 10 + L > len(data):
         return _raw_field("报文通信测试(F3)", data, off), len(data)
-    from .frame import _bcd_str
     proto = data[8]
     child = _embed_proto_field("测试报文", proto, data[10:10 + L], off + 10) if L else None
     children = [
@@ -159,7 +157,6 @@ def _dec_afn06_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Fiel
     need = 1 + 9 * n
     if len(data) < need:
         return _raw_field("上报从节点信息(F1)", data, off), len(data)
-    from .frame import _bcd_str
     children = []
     for k in range(n):
         base = off + 1 + 9 * k
@@ -201,7 +198,6 @@ def _dec_afn06_f3_up(data: bytes, off: int, version: str = "2019") -> tuple[Fiel
 def _dec_afn14_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 9:
         return _raw_field("路由请求抄读内容(F1)", data, off), len(data)
-    from .frame import _bcd_str
     return Field("路由请求抄读内容(F1)", off, 9, data[:9].hex(" ").upper(),
                  f"相位 {data[0] or '未知'} · 从节点 {_bcd_le(data[1:7])} · 序号 {_int_le(data[7:9])}",
                  "1B相位+6B地址BCD+2B序号", KIND_DATA), 9
@@ -210,7 +206,6 @@ def _dec_afn14_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Fiel
 def _dec_afn14_f3_up(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
     if len(data) < 9:
         return _raw_field("请求依通信延时修正通信数据(F3)", data, off), len(data)
-    from .frame import _bcd_str
     L = data[8]
     if 9 + L > len(data):
         return _raw_field("请求依通信延时修正通信数据(F3)", data, off), len(data)
@@ -276,7 +271,6 @@ def _dec_afnf1_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Fiel
 def _dec_addr6_simple(name: str, data: bytes, off: int, note: str = "6B BCD") -> tuple[Field, int]:
     if len(data) < 6:
         return _raw_field(name, data, off), len(data)
-    from .frame import _bcd_str
     return Field(name, off, 6, data[:6].hex(" ").upper(), _bcd_le(data[:6]), note, KIND_DATA), 6
 
 
@@ -340,7 +334,6 @@ def _dec_afn10_f2_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
     """从节点信息应答（标准表 53）：2B总量 + 1B本帧数量 + n×(6B地址BCD + 2B信息BS)。"""
     if len(data) < 3:
         return _raw_field("从节点信息(F2)", data, off), len(data)
-    from .frame import _bcd_str
     total = _int_le(data[:2])
     cnt = data[2]
     need = 3 + 8 * cnt
@@ -390,7 +383,6 @@ def _dec_afn03_f10_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
         layout, fixed = "hw", fixed_hw
     if layout is None:
         return _raw_field("运行模式信息(F10)", data, off), len(data)
-    from .frame import _bcd_str
     children = []
     p = 0
     for name, ln, fmt in fixed:
@@ -400,7 +392,7 @@ def _dec_afn03_f10_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
         elif fmt == "hex":
             val = chunk.hex(" ").upper()
         elif fmt == "bcd":
-            val = _bcd_str(chunk)
+            val = _bcd_le(chunk)          # 日期/序号：BCD 低位在前 → 正读
         elif fmt == "bs":
             val = chunk.hex(" ").upper()
         else:
@@ -429,7 +421,6 @@ def _dec_afn11_f1_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
     """添加从节点（标准表 65）：1B数量 + n×(6B地址BCD + 1B通信协议类型)。"""
     if not data:
         return _raw_field("添加从节点(F1)", data, off), 0
-    from .frame import _bcd_str
     n = data[0]
     need = 1 + 7 * n
     if len(data) < need:
@@ -482,7 +473,7 @@ def _dec_f0_f9_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
     """查询心跳帧节点信息（华立）：2B起始序号(BCD,从1起) + 1B数量(≤15)。"""
     if len(data) < 3:
         return _raw_field("查询心跳帧节点信息(F9·华立)", data, off), len(data)
-    start = _bcd_str(data[:2])
+    start = _bcd_le(data[:2])             # 序号 BCD 低位在前 → 正读
     n = data[2]
     return Field("查询心跳帧节点信息(F9·华立)", off, 3, data[:3].hex(" ").upper(),
                  f"起始序号 {start} · 数量 {n}（≤15）", "2B序号BCD+1B数量", KIND_DATA), 3

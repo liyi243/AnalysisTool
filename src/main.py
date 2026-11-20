@@ -77,7 +77,7 @@ def run_selftest() -> int:
         sys.stdout = open(os.devnull, "w")
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w")
-    from qgdw3762.samples import SAMPLES, sample_report
+    from qgdw3762.samples import SAMPLES, SAMPLE_LOG, sample_report
     ok = True
     for name, hexs in SAMPLES:
         from app_svc.pipeline import parse_text
@@ -89,6 +89,15 @@ def run_selftest() -> int:
             print(f"   {fr.direction} len={fr.length} {fr.summary}")
         if bad:
             ok = False
+    # 组帧（流程会话）自检：日志样例 3 帧应组出 ≥2 会话
+    from app_svc.pipeline import parse_text as _pt
+    from qgdw3762.flows import group_frames
+    _frames = _pt(SAMPLE_LOG).frames
+    _sessions, _groups = group_frames(_frames)
+    print(f"[组帧自检] {len(_frames)} 帧 → {len(_sessions)} 会话 / {len(_groups)} 流程段")
+    if len(_sessions) < 2:
+        print("组帧自检失败：日志样例应至少形成 2 个会话")
+        ok = False
     print(sample_report())
     print("SELFTEST", "PASSED" if ok else "FAILED")
     return 0 if ok else 1
