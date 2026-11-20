@@ -18,6 +18,17 @@ def _int_le(data: bytes) -> int:
     return int.from_bytes(data, "little")
 
 
+def _bcd_le(raw: bytes) -> str:
+    """BCD 低位在前 → 正序表号显示（数据单元中的表地址/电表号用）。"""
+    out = []
+    for b in reversed(raw):
+        hi, lo = b >> 4, b & 0x0F
+        if hi > 9 or lo > 9:
+            return raw.hex(" ").upper()
+        out.append(f"{hi}{lo}")
+    return "".join(out)
+
+
 def _embed_proto_field(name: str, proto: int, content: bytes, offset: int) -> Field:
     """内嵌规约报文字段：645 → 结构解析；其他 → HEX。"""
     proto_txt = consts.PROTO_TYPE.get(proto, f"保留(0x{proto:02X})")
@@ -107,7 +118,7 @@ def _dec_addr6(name: str, fn: str, data: bytes, off: int) -> tuple[Field, int] |
         return None
     from .frame import _bcd_str
     return Field(f"{name}({fn})", off, 6, data[:6].hex(" ").upper(),
-                 _bcd_str(data[:6]), "BCD 6字节", KIND_DATA), 6
+                 _bcd_le(data[:6]), "BCD 6字节", KIND_DATA), 6
 
 
 def _dec_afn04_f1_down(data: bytes, off: int, version: str = "2019") -> tuple[Field, int]:
@@ -130,7 +141,7 @@ def _dec_afn04_f3_down(data: bytes, off: int, version: str = "2019") -> tuple[Fi
     children = [
         Field("本地信道标识", off, 1, f"{data[0]:02X}", f"{data[0]}（0=默认信道）", "", KIND_DATA),
         Field("测试通信速率", off + 1, 1, f"{data[1]:02X}", f"{data[1]}（0=默认）", "", KIND_DATA),
-        Field("目标地址", off + 2, 6, data[2:8].hex(" ").upper(), _bcd_str(data[2:8]), "BCD", KIND_DATA),
+        Field("目标地址", off + 2, 6, data[2:8].hex(" ").upper(), _bcd_le(data[2:8]), "BCD", KIND_DATA),
         Field("通信协议类型", off + 8, 1, f"{proto:02X}", consts.PROTO_TYPE.get(proto, "保留"), "", KIND_DATA),
         Field("报文长度", off + 9, 1, f"{L:02X}", str(L), "", KIND_DATA),
     ]
@@ -157,7 +168,7 @@ def _dec_afn06_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Fiel
         seq = _int_le(node[7:9])
         children.append(Field(
             f"从节点{k + 1}", base, 9, node.hex(" ").upper(),
-            f"地址 {_bcd_str(node[0:6])} · {consts.PROTO_TYPE.get(proto, '保留')} · 序号 {seq}",
+            f"地址 {_bcd_le(node[0:6])} · {consts.PROTO_TYPE.get(proto, '保留')} · 序号 {seq}",
             "6B地址BCD+1B协议+2B序号", KIND_DATA))
     return Field("上报从节点信息(F1)", off, need, data[:need].hex(" ").upper(),
                  f"上报 {n} 个从节点", "", KIND_DATA, children=children), need
@@ -192,7 +203,7 @@ def _dec_afn14_f1_up(data: bytes, off: int, version: str = "2019") -> tuple[Fiel
         return _raw_field("路由请求抄读内容(F1)", data, off), len(data)
     from .frame import _bcd_str
     return Field("路由请求抄读内容(F1)", off, 9, data[:9].hex(" ").upper(),
-                 f"相位 {data[0] or '未知'} · 从节点 {_bcd_str(data[1:7])} · 序号 {_int_le(data[7:9])}",
+                 f"相位 {data[0] or '未知'} · 从节点 {_bcd_le(data[1:7])} · 序号 {_int_le(data[7:9])}",
                  "1B相位+6B地址BCD+2B序号", KIND_DATA), 9
 
 
@@ -206,7 +217,7 @@ def _dec_afn14_f3_up(data: bytes, off: int, version: str = "2019") -> tuple[Fiel
     content = data[9:9 + L]
     child = six45.parse_645(content, off + 9) if content else None
     children = [
-        Field("从节点地址", off, 6, data[0:6].hex(" ").upper(), _bcd_str(data[0:6]), "BCD", KIND_DATA),
+        Field("从节点地址", off, 6, data[0:6].hex(" ").upper(), _bcd_le(data[0:6]), "BCD", KIND_DATA),
         Field("预计延迟时间", off + 6, 2, data[6:8].hex(" ").upper(), f"{_int_le(data[6:8])} s", "", KIND_DATA),
         Field("抄读信息长度", off + 8, 1, f"{L:02X}", str(L), "", KIND_DATA),
     ]
@@ -266,7 +277,7 @@ def _dec_addr6_simple(name: str, data: bytes, off: int, note: str = "6B BCD") ->
     if len(data) < 6:
         return _raw_field(name, data, off), len(data)
     from .frame import _bcd_str
-    return Field(name, off, 6, data[:6].hex(" ").upper(), _bcd_str(data[:6]), note, KIND_DATA), 6
+    return Field(name, off, 6, data[:6].hex(" ").upper(), _bcd_le(data[:6]), note, KIND_DATA), 6
 
 
 def _dec_afn03_f4_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
@@ -311,21 +322,188 @@ def _dec_afn05_f2(data: bytes, off: int, *_a) -> tuple[Field, int]:
 
 
 def _dec_afn10_f1_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """从节点数量应答：2B 总数量（标准表 52）；部分固件附带 2B 路由支持最大数。"""
     if len(data) < 2:
         return _raw_field("从节点数量(F1)", data, off), len(data)
     n = _int_le(data[:2])
-    return Field("从节点数量(F1)", off, 2, data[:2].hex(" ").upper(), f"{n} 个", "BIN 2B", KIND_DATA), 2
+    if len(data) >= 4:
+        mx = _int_le(data[2:4])
+        return Field("从节点数量(F1)", off, 4, data[:4].hex(" ").upper(),
+                     f"从节点总量 {n} · 路由支持最大 {mx}",
+                     "2B总量+2B最大（标准表52：总量2B，本帧固件多带2B）",
+                     KIND_DATA), len(data)
+    return Field("从节点数量(F1)", off, 2, data[:2].hex(" ").upper(), f"{n} 个",
+                 "BIN 2B", KIND_DATA), 2
 
 
 def _dec_afn10_f2_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
-    """从节点信息：总数量 + 本帧数量 + 每节点(6B地址 + 1B协议? 或按标准变长)。简化展示。"""
-    if len(data) < 2:
+    """从节点信息应答（标准表 53）：2B总量 + 1B本帧数量 + n×(6B地址BCD + 2B信息BS)。"""
+    if len(data) < 3:
         return _raw_field("从节点信息(F2)", data, off), len(data)
-    # 常见格式：2B总数量 + 1B本帧数 + 节点列表（每节点 6B地址+附加）
-    total = _int_le(data[:2]) if len(data) >= 2 else 0
-    return Field("从节点信息(F2)", off, len(data), data.hex(" ").upper(),
-                 f"总数量约 {total} · 共 {len(data)} 字节（详细结构按标准/HEX）",
-                 "建议对照标准表查看", KIND_DATA), len(data)
+    from .frame import _bcd_str
+    total = _int_le(data[:2])
+    cnt = data[2]
+    need = 3 + 8 * cnt
+    if len(data) < need:
+        return _raw_field("从节点信息(F2)", data, off), len(data)
+    children = []
+    for k in range(cnt):
+        base = off + 3 + 8 * k
+        addr = data[3 + 8 * k:3 + 8 * k + 6]
+        info = _int_le(data[3 + 8 * k + 6:3 + 8 * k + 8])
+        phase = "".join(str(i - 7) for i in range(8, 11)
+                        if info >> i & 1) or "未知"
+        proto = (info >> 11) & 0x0F
+        qual = (info >> 4) & 0x0F
+        relay = info & 0x0F
+        proto_txt = consts.PROTO_TYPE.get(proto, f"保留({proto})")
+        children.append(Field(
+            f"从节点{k + 1}", base, 8, data[3 + 8 * k:3 + 8 * k + 8].hex(" ").upper(),
+            f"地址 {_bcd_le(addr)} · 相位{phase} · 协议 {proto_txt}"
+            f" · 中继{relay} · 品质{qual}",
+            "6B地址BCD+2B信息BS(表54:中继D3~D0/品质D7~D4/相位D8~D10/协议D11~D14)",
+            KIND_DATA))
+    return Field("从节点信息(F2)", off, need, data[:need].hex(" ").upper(),
+                 f"总量 {total} · 本帧 {cnt} 个", "2B总量+1B数量+n×(6B地址+2B信息)",
+                 KIND_DATA, children=children), need
+
+
+def _dec_afn03_f10_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """本地通信模块运行模式信息应答（标准表 30）。
+
+    布局探测：标准布局固定段 40B（含升级操作等待时间1B）+ n×2B 速率；
+    华立固件固定段 39B（不含升级等待字段）+ n×2B 速率。两者按 DU 总长奇偶互斥。
+    现场样例（41B）：630/2000/115kbit/s 与 10-F1 应答、下行 R4~R5 速率三方交叉吻合。
+    """
+    fixed_std = [("本地通信模块字", 6, "bs"), ("从节点监控最大超时时间", 2, "s"),
+                 ("广播命令最大超时时间", 2, "s"), ("最大支持的报文长度", 2, ""),
+                 ("文件传输最大单个数据包长度", 2, ""), ("升级操作等待时间", 1, "s"),
+                 ("主节点地址(HEX)", 6, "hex"), ("支持的最大从节点数量", 2, ""),
+                 ("当前从节点数量", 2, ""), ("协议发布日期YYMMDD", 3, "bcd"),
+                 ("协议最后备案日期YYMMDD", 3, "bcd"), ("厂商代码及版本信息", 9, "")]
+    fixed_hw = [f for f in fixed_std if f[0] != "升级操作等待时间"]
+    layout = None
+    fixed = None
+    if (len(data) - 40) >= 2 and (len(data) - 40) % 2 == 0:
+        layout, fixed = "std", fixed_std
+    elif (len(data) - 39) >= 2 and (len(data) - 39) % 2 == 0:
+        layout, fixed = "hw", fixed_hw
+    if layout is None:
+        return _raw_field("运行模式信息(F10)", data, off), len(data)
+    from .frame import _bcd_str
+    children = []
+    p = 0
+    for name, ln, fmt in fixed:
+        chunk = data[p:p + ln]
+        if fmt == "s":
+            val = f"{_int_le(chunk)} s"
+        elif fmt == "hex":
+            val = chunk.hex(" ").upper()
+        elif fmt == "bcd":
+            val = _bcd_str(chunk)
+        elif fmt == "bs":
+            val = chunk.hex(" ").upper()
+        else:
+            val = str(_int_le(chunk)) if ln <= 2 else chunk.hex(" ").upper()
+        children.append(Field(name, off + p, ln, chunk.hex(" ").upper(), val,
+                              "标准表30", KIND_DATA))
+        p += ln
+    rates = []
+    while p + 2 <= len(data):
+        raw = _int_le(data[p:p + 2])
+        unit = "kbit/s" if raw & 0x8000 else "bit/s"
+        v = raw & 0x7FFF
+        rates.append("默认速率" if v == 0 else f"{v} {unit}")
+        children.append(Field(f"通信速率{len(rates)}", off + p, 2,
+                              data[p:p + 2].hex(" ").upper(),
+                              rates[-1], "D14~D0速率+D15单位", KIND_DATA))
+        p += 2
+    note = "标准表30布局" if layout == "std" else \
+        "华立固件布局（较标准表30少1B升级等待时间字段）"
+    return Field("运行模式信息(F10)", off, len(data), data.hex(" ").upper(),
+                 f"速率：{'/'.join(rates) or '—'}", note, KIND_DATA,
+                 children=children), len(data)
+
+
+def _dec_afn11_f1_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """添加从节点（标准表 65）：1B数量 + n×(6B地址BCD + 1B通信协议类型)。"""
+    if not data:
+        return _raw_field("添加从节点(F1)", data, off), 0
+    from .frame import _bcd_str
+    n = data[0]
+    need = 1 + 7 * n
+    if len(data) < need:
+        return _raw_field("添加从节点(F1)", data, off), len(data)
+    children = []
+    for k in range(n):
+        base = off + 1 + 7 * k
+        node = data[1 + 7 * k:1 + 7 * k + 7]
+        proto = node[6]
+        children.append(Field(
+            f"从节点{k + 1}", base, 7, node.hex(" ").upper(),
+            f"地址 {_bcd_le(node[:6])} · {consts.PROTO_TYPE.get(proto, f'保留({proto})')}",
+            "6B地址BCD+1B协议类型", KIND_DATA))
+    return Field("添加从节点(F1)", off, need, data[:need].hex(" ").upper(),
+                 f"添加 {n} 个从节点", "1B数量+n×(6B地址+1B协议)", KIND_DATA,
+                 children=children), need
+
+
+def _dec_f0_f2_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    return _dec_addr6_simple("复位从节点(F2·华立)", data, off, "BCD 6B 表地址")
+
+
+def _dec_f0_f4_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """设置白名单开关（华立）：1B，D0=白名单 D1=黑名单，0关/1开。"""
+    if not data:
+        return _raw_field("设置白名单开关(F4·华立)", data, off), 0
+    v = data[0]
+    wl = "开启" if v & 0x01 else "关闭"
+    bl = "开启" if v & 0x02 else "关闭"
+    return Field("设置白名单开关(F4·华立)", off, 1, f"{v:02X}",
+                 f"白名单{wl} · 黑名单{bl}", "D0白名单/D1黑名单 0关1开", KIND_DATA), 1
+
+
+def _dec_f0_f5_up(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """查询白名单状态应答（华立）：1B，D0=白名单 D1=黑名单。"""
+    if not data:
+        return _raw_field("白名单状态(F5·华立)", data, off), 0
+    v = data[0]
+    wl = "开启" if v & 0x01 else "关闭"
+    bl = "开启" if v & 0x02 else "关闭"
+    return Field("白名单状态(F5·华立)", off, 1, f"{v:02X}",
+                 f"白名单{wl} · 黑名单{bl}", "D0白名单/D1黑名单 0关1开", KIND_DATA), 1
+
+
+def _dec_f0_f8_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    return _dec_addr6_simple("查询节点组网状态(F8·华立)", data, off, "BCD 6B 表地址")
+
+
+def _dec_f0_f9_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """查询心跳帧节点信息（华立）：2B起始序号(BCD,从1起) + 1B数量(≤15)。"""
+    if len(data) < 3:
+        return _raw_field("查询心跳帧节点信息(F9·华立)", data, off), len(data)
+    start = _bcd_str(data[:2])
+    n = data[2]
+    return Field("查询心跳帧节点信息(F9·华立)", off, 3, data[:3].hex(" ").upper(),
+                 f"起始序号 {start} · 数量 {n}（≤15）", "2B序号BCD+1B数量", KIND_DATA), 3
+
+
+def _dec_f0_f13_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    """快速拉合闸（华立）：1B动作(0拉/1合) + 8B密码BCD(默认全0)。"""
+    if len(data) < 9:
+        return _raw_field("快速拉合闸(F13·华立)", data, off), len(data)
+    act = "合闸" if data[0] == 1 else ("拉闸" if data[0] == 0 else f"保留({data[0]})")
+    return Field("快速拉合闸(F13·华立)", off, 9, data[:9].hex(" ").upper(),
+                 f"{act} · 密码 {data[1:9].hex().upper()}", "1B动作+8B密码BCD",
+                 KIND_DATA), 9
+
+
+def _dec_f0_f22_down(data: bytes, off: int, *_a) -> tuple[Field, int]:
+    if not data:
+        return _raw_field("远程升级停止/启动(F22·华立)", data, off), 0
+    v = data[0]
+    txt = "重新开始" if v == 1 else ("停止" if v == 0 else f"保留({v})")
+    return Field("远程升级停止/启动(F22·华立)", off, 1, f"{v:02X}", txt, "1B", KIND_DATA), 1
 
 
 def _dec_afn12_simple(data: bytes, off: int, name: str) -> tuple[Field, int]:
@@ -411,10 +589,23 @@ _DECODERS: dict[tuple[int, int, int | None], object] = {
     (0x12, 3, 0): _dec_afn12_f3,
     (0x13, 1, None): _dec_afn13_f1,
     (0x15, 1, None): _dec_afn15_f1,
+    # 运行模式信息（标准表30大表，2013/2019 一致）
+    (0x03, 10, 1): _dec_afn03_f10_up,
+    (0x03, 10, 0): _dec_afn03_f10_up,
+    # 档案同步：添加从节点（下行）
+    (0x11, 1, 0): _dec_afn11_f1_down,
+    # 华立扩展（AFN=F0H 内部调试）
+    (0xF0, 2, 0): _dec_f0_f2_down,
+    (0xF0, 4, 0): _dec_f0_f4_down,
+    (0xF0, 5, 1): _dec_f0_f5_up,
+    (0xF0, 8, 0): _dec_f0_f8_down,
+    (0xF0, 9, 0): _dec_f0_f9_down,
+    (0xF0, 13, 0): _dec_f0_f13_down,
+    (0xF0, 22, 0): _dec_f0_f22_down,
 }
 
 # 无数据单元的 Fn（请求类常见）
-_NO_DATA_FN = {(0x04, 2), (0x05, 3), (0x14, 1)}
+_NO_DATA_FN = {(0x04, 2), (0x05, 3), (0x14, 1), (0x10, 1), (0x10, 4), (0x11, 5), (0x11, 6), (0x12, 1), (0x12, 2), (0x12, 3), (0xF0, 3), (0xF0, 5)}
 
 
 def decode_data_units(afn: int, up: bool, fns: list[tuple[int, int]],

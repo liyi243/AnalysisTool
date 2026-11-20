@@ -22,9 +22,16 @@ def parse_stream(data: bytes, line_map: array | None = None, protocol_version: s
         src_line = cand.source_line
         if line_map and 0 <= cand.start < len(line_map):
             src_line = line_map[cand.start]
-        frame = parse_frame(data[cand.start:cand.start + cand.length],
-                            start=cand.start, source_line=src_line,
-                            protocol_version=protocol_version)
+        try:
+            frame = parse_frame(data[cand.start:cand.start + cand.length],
+                                start=cand.start, source_line=src_line,
+                                protocol_version=protocol_version)
+        except Exception as exc:
+            # 单帧解析异常不得拖垮整批：降级为异常帧，保留原始字节
+            from qgdw3762.model import ParsedFrame as _PF
+            frame = _PF(raw=data[cand.start:cand.start + cand.length],
+                        start=cand.start, source_line=src_line)
+            frame.errors.append(f"帧解析内部异常（已降级为HEX展示）：{exc!r}")
         if cand.reason and not frame.errors:
             frame.errors.append(cand.reason)
         result.frames.append(frame)

@@ -19,6 +19,54 @@ if str(SRC) not in sys.path:
 from app_svc import APP_TITLE, APP_VERSION
 
 
+def _install_crash_hook() -> None:
+    """全局异常钩子：未捕获异常写入 logs/crash-*.log 并弹窗提示。
+
+    背景：PyInstaller --windowed 模式下 stdout/stderr 为 None，未捕获异常
+    被直接吞掉导致"闪退"且无任何痕迹。此钩子保证每次异常都留有日志，
+    便于用户回报问题后精确定位。
+    """
+    import datetime
+    import traceback
+
+    def _log_dir() -> Path:
+        if getattr(sys, "frozen", False):
+            base = Path(sys.executable).resolve().parent      # exe 旁边
+        else:
+            base = Path(__file__).resolve().parent.parent      # 项目根
+        d = base / "logs"
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            d = Path(".")                                     # 兜底当前目录
+        return d
+
+    def _hook(etype, value, tb) -> None:
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        text = "".join(traceback.format_exception(etype, value, tb))
+        entry = f"\n==== {stamp} · {APP_TITLE} v{APP_VERSION} ====\n{text}"
+        try:
+            log = _log_dir() / f"crash-{datetime.date.today():%Y%m%d}.log"
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(entry)
+        except OSError:
+            pass
+        sys.__stderr__ and sys.__stderr__.write(entry)
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            if QApplication.instance() is not None:
+                box = QMessageBox()
+                box.setIcon(QMessageBox.Icon.Critical)
+                box.setWindowTitle("程序异常")
+                box.setText(f"发生未处理异常：{value}")
+                box.setDetailedText(text)
+                box.exec()
+        except Exception:
+            pass
+
+    sys.excepthook = _hook
+
+
 def run_selftest() -> int:
     """内置样例自测：解析全部样例帧并输出结果。"""
     import os
@@ -53,6 +101,8 @@ def run_gui() -> int:
 
     from gui.main_window import MainWindow
     from gui.theme import build_qss
+
+    _install_crash_hook()
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")

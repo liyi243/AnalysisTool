@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from app_svc import APP_TITLE, APP_VERSION, exporter
 from app_svc.pipeline import parse_file, parse_text
 from gui.field_tree import FieldTreePanel
+from gui.flow_panel import FlowTreePanel
 from gui.hex_viewer import HexByteMapViewer
 from gui.input_panel import InputPanel
 from gui.theme import (
@@ -176,6 +177,19 @@ class MainWindow(QMainWindow):
         hh.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         hh.highlightSections()
         lp.addWidget(self.table)
+        # ── 流程会话面板（组帧：识别/档案同步/注册等流程分组） ──
+        ft_row = QHBoxLayout()
+        ft = QLabel("◈ 流程会话（组帧）")
+        ft.setObjectName("panelTitle")
+        self._flow_hint = QLabel("—")
+        self._flow_hint.setObjectName("mutedText")
+        ft_row.addWidget(ft)
+        ft_row.addStretch(1)
+        ft_row.addWidget(self._flow_hint)
+        lp.addLayout(ft_row)
+        self.flow_panel = FlowTreePanel()
+        self.flow_panel.setMaximumHeight(170)
+        lp.addWidget(self.flow_panel)
         right.addWidget(list_panel)
 
         # ── 字节映射 + 字段树 ──
@@ -265,6 +279,7 @@ class MainWindow(QMainWindow):
         self.input.fileChosen.connect(self._on_file)
         self.input.clearRequested.connect(self._on_clear)
         self.table.currentCellChanged.connect(self._on_row_change)
+        self.flow_panel.sessionClicked.connect(self._on_session_clicked)
         self.hex_viewer.byteClicked.connect(self._on_byte_clicked)
         self.field_tree.fieldSelected.connect(self._on_field_selected)
 
@@ -377,6 +392,10 @@ class MainWindow(QMainWindow):
             self._show_frame(self._frames[0])   # 行号未变化时信号不触发，显式刷新
         else:
             self._show_frame(None)
+        self.flow_panel.load_frames(self._frames)
+        from qgdw3762.flows import group_frames
+        n_sess = len(group_frames(self._frames)[0]) if self._frames else 0
+        self._flow_hint.setText(f"{n_sess} 会话" if n_sess else "—")
         if result.warnings:
             self._diag.setText("⚠ " + "；".join(result.warnings))
             self._diag.setStyleSheet(f"color:{WARNING};")
@@ -416,6 +435,16 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, c, v)
 
     # ── 帧详情 ──────────────────────────────────────────────────
+    def _iter_sessions(self):
+        from qgdw3762.flows import group_frames
+        sessions, _ = group_frames(self._frames)
+        return sessions
+
+    def _on_session_clicked(self, session) -> None:
+        """点击流程会话 → 选中会话的请求帧。"""
+        if session.frame_idx:
+            self.table.selectRow(session.frame_idx[0])
+
     def _on_row_change(self, row: int, _c1: int, _prev_row: int, _c2: int) -> None:
         if 0 <= row < len(self._frames):
             self._show_frame(self._frames[row])
